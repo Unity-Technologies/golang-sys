@@ -11,7 +11,7 @@ unset LANG
 export LC_ALL=C
 export LC_CTYPE=C
 
-CC=${CC:-gcc}
+CC=${CC:-cc}
 
 uname=$(uname)
 
