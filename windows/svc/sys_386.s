@@ -22,7 +22,8 @@ TEXT ·servicemain(SB),7,$0
 	MOVL	AX, (SP)
 	MOVL	$·servicectlhandler(SB), AX
 	MOVL	AX, 4(SP)
-	MOVL	·cRegisterServiceCtrlHandlerW(SB), AX
+	MOVL	$0, 8(SP)
+	MOVL	·cRegisterServiceCtrlHandlerExW(SB), AX
 	MOVL	SP, BP
 	CALL	AX
 	MOVL	BP, SP

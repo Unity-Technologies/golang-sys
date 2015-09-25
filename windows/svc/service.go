@@ -34,12 +34,25 @@ const (
 // by the service manager, and should be actioned upon by the service.
 type Cmd uint32
 
+// EventType represents the type of event. It is only used if Cmd is one of:
+//
+//  * windows.SERVICE_CONTROL_DEVICEEVENT
+//  * windows.SERVICE_CONTROL_HARDWAREPROFILECHANGE
+//  * windows.SERVICE_CONTROL_POWEREVENT
+//  * windows.SERVICE_CONTROL_SESSIONCHANGE
+//
+// otherwise, it's value is 0.
+// See https://msdn.microsoft.com/en-us/library/windows/desktop/ms683241.aspx
+// for more information on it's possible values.
+type EventType uint32
+
 const (
 	Stop        = Cmd(windows.SERVICE_CONTROL_STOP)
 	Pause       = Cmd(windows.SERVICE_CONTROL_PAUSE)
 	Continue    = Cmd(windows.SERVICE_CONTROL_CONTINUE)
 	Interrogate = Cmd(windows.SERVICE_CONTROL_INTERROGATE)
 	Shutdown    = Cmd(windows.SERVICE_CONTROL_SHUTDOWN)
+	PreShutdown = Cmd(windows.SERVICE_CONTROL_PRESHUTDOWN)
 )
 
 // Accepted is used to describe commands accepted by the service.
@@ -49,6 +62,7 @@ type Accepted uint32
 const (
 	AcceptStop             = Accepted(windows.SERVICE_ACCEPT_STOP)
 	AcceptShutdown         = Accepted(windows.SERVICE_ACCEPT_SHUTDOWN)
+	AcceptPreShutdown      = Accepted(windows.SERVICE_ACCEPT_PRESHUTDOWN)
 	AcceptPauseAndContinue = Accepted(windows.SERVICE_ACCEPT_PAUSE_CONTINUE)
 )
 
@@ -85,16 +99,16 @@ type Handler interface {
 
 var (
 	// These are used by asm code.
-	goWaitsH                     uintptr
-	cWaitsH                      uintptr
-	ssHandle                     uintptr
-	sName                        *uint16
-	sArgc                        uintptr
-	sArgv                        **uint16
-	ctlHandlerProc               uintptr
-	cSetEvent                    uintptr
-	cWaitForSingleObject         uintptr
-	cRegisterServiceCtrlHandlerW uintptr
+	goWaitsH                       uintptr
+	cWaitsH                        uintptr
+	ssHandle                       uintptr
+	sName                          *uint16
+	sArgc                          uintptr
+	sArgv                          **uint16
+	ctlHandlerProc                 uintptr
+	cSetEvent                      uintptr
+	cWaitForSingleObject           uintptr
+	cRegisterServiceCtrlHandlerExW uintptr
 )
 
 func init() {
@@ -102,12 +116,15 @@ func init() {
 	cSetEvent = k.MustFindProc("SetEvent").Addr()
 	cWaitForSingleObject = k.MustFindProc("WaitForSingleObject").Addr()
 	a := syscall.MustLoadDLL("advapi32.dll")
-	cRegisterServiceCtrlHandlerW = a.MustFindProc("RegisterServiceCtrlHandlerW").Addr()
+	cRegisterServiceCtrlHandlerExW = a.MustFindProc("RegisterServiceCtrlHandlerExW").Addr()
 }
 
 type ctlEvent struct {
-	cmd   Cmd
-	errno uint32
+	cmd       Cmd
+	eventType EventType
+	eventData uintptr
+	context   uintptr
+	errno     uint32
 }
 
 // service provides access to windows service api.
@@ -161,6 +178,9 @@ func (s *service) updateStatus(status *Status, ec *exitCode) error {
 	}
 	if status.Accepts&AcceptShutdown != 0 {
 		t.ControlsAccepted |= windows.SERVICE_ACCEPT_SHUTDOWN
+	}
+	if status.Accepts&AcceptPreShutdown != 0 {
+		t.ControlsAccepted |= windows.SERVICE_ACCEPT_PRESHUTDOWN
 	}
 	if status.Accepts&AcceptPauseAndContinue != 0 {
 		t.ControlsAccepted |= windows.SERVICE_ACCEPT_PAUSE_CONTINUE
@@ -276,8 +296,8 @@ func Run(name string, handler Handler) error {
 		return err
 	}
 
-	ctlHandler := func(ctl uint32) uintptr {
-		e := ctlEvent{cmd: Cmd(ctl)}
+	ctlHandler := func(ctl uint32, event uint32, eventData uintptr, ctx uintptr) uintptr {
+		e := ctlEvent{cmd: Cmd(ctl), eventType: EventType(event), eventData: eventData, context: ctx}
 		// We assume that this callback function is running on
 		// the same thread as Run. Nowhere in MS documentation
 		// I could find statement to guarantee that. So putting
