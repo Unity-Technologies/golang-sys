@@ -13,7 +13,8 @@ TEXT ·servicemain(SB),7,$0
 
 	MOVQ	·sName(SB), CX
 	MOVQ	$·servicectlhandler(SB), DX
-	MOVQ	·cRegisterServiceCtrlHandlerW(SB), AX
+	MOVQ	$0, R8
+	MOVQ	·cRegisterServiceCtrlHandlerExW(SB), AX
 	CALL	AX
 	CMPQ	AX, $0
 	JE	exit
